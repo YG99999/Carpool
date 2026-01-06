@@ -1,1013 +1,615 @@
-import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { 
-  Users, Car, Calendar, Settings, Plus, Trash2, Edit2, 
-  Check, X, ChevronRight, ChevronLeft, Save, AlertTriangle, 
-  User, MapPin, LogOut, Menu, GripVertical, Download
-} from 'lucide-react';
+import React, { useState, useEffect } from 'react';
 
-// --- THEME ---
-const COLORS = {
-  primary: '#173f7f', // Dark Blue
-  accent: '#1abc54',  // Bright Green
-  bg: '#f3f4f6',
-  white: '#ffffff',
-  textMain: '#1e293b',
-  danger: '#ef4444',
-  warning: '#f59e0b',
-};
-
-// --- DATA TYPES & MOCKS ---
-
-type ID = string;
-
-interface Player {
-  id: ID;
-  name: string;
-  teamName: string;
-  grade: string;
-  needsChildSeat: boolean;
-  groupIds: ID[]; // For preferred groups
-}
-
-interface Driver {
-  id: ID;
-  name: string;
-  hasLicense: boolean;
-  maxSeatsTotal: number;
-  maxChildSeats: number;
-  notes: string;
-}
-
-interface PreferredGroup {
-  id: ID;
-  name: string;
-  priority: number; // 1-5
-  memberIds: ID[];
-  requirement: 'hard' | 'soft';
-}
-
-interface Eligibility {
-  driverId: ID;
-  playerId: ID;
-  allowed: boolean;
-  preference: 'none' | 'prefer' | 'always';
-}
-
-interface Event {
-  id: ID;
-  name: string;
-  dateTime: string;
-  locationName: string;
-  locationAddress: string;
-  notes: string;
-}
-
-interface EventAttendance {
-  eventId: ID;
-  playerId: ID;
-  isGoing: boolean;
-  needsRide: boolean;
-}
-
-interface EventDriver {
-  eventId: ID;
-  driverId: ID;
-  isDriving: boolean;
-  direction: 'to' | 'from' | 'both';
-  availableSeatsTotal: number;
-  availableChildSeats: number;
-  notes: string;
-}
-
-interface Assignment {
-  id: ID;
-  eventId: ID;
-  driverId: ID; // 'unassigned' if unassigned
-  playerId: ID;
-  direction: 'to' | 'from' | 'both';
-}
-
-// --- DATABASE SERVICE (LocalStorage) ---
-
-const DB = {
-  get: (key: string) => {
-    try {
-      const item = localStorage.getItem(`tc_${key}`);
-      return item ? JSON.parse(item) : [];
-    } catch { return []; }
-  },
-  set: (key: string, data: any) => {
-    localStorage.setItem(`tc_${key}`, JSON.stringify(data));
-  },
-  // Initialize default data if empty
-  init: () => {
-    if (!localStorage.getItem('tc_players')) {
-      DB.set('players', []);
-      DB.set('drivers', []);
-      DB.set('groups', []);
-      DB.set('eligibility', []);
-      DB.set('events', []);
-      DB.set('attendance', []);
-      DB.set('eventDrivers', []);
-      DB.set('assignments', []);
-    }
-  }
-};
-
-// --- UTILS ---
-
-const generateId = () => Math.random().toString(36).substr(2, 9);
-const formatDate = (iso: string) => {
-  if (!iso) return '';
-  return new Date(iso).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
-};
-
-// --- COMPONENTS ---
-
-const Button = ({ children, onClick, variant = 'primary', className = '', disabled = false }: any) => {
-  const base = "px-4 py-2 rounded-lg font-medium transition-colors flex items-center justify-center gap-2";
-  const styles: any = {
-    primary: `text-white hover:opacity-90 disabled:opacity-50`,
-    secondary: `bg-white border-2 border-slate-200 text-slate-700 hover:bg-slate-50 disabled:opacity-50`,
-    danger: `bg-red-50 text-red-600 hover:bg-red-100 disabled:opacity-50`,
-    accent: `bg-[#1abc54] text-white hover:bg-[#159c45] disabled:opacity-50`
-  };
-  
-  // Custom style injection for primary to use theme color
-  const styleProp = variant === 'primary' ? { backgroundColor: COLORS.primary } : {};
-
-  return (
-    <button 
-      onClick={onClick} 
-      disabled={disabled}
-      className={`${base} ${styles[variant]} ${className}`}
-      style={styleProp}
-    >
-      {children}
-    </button>
-  );
-};
-
-const Card = ({ children, className = '', title, action }: any) => (
-  <div className={`bg-white rounded-xl shadow-sm border border-slate-100 overflow-hidden ${className}`}>
-    {(title || action) && (
-      <div className="px-4 py-3 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
-        {title && <h3 className="font-semibold text-slate-800">{title}</h3>}
-        {action}
-      </div>
-    )}
-    <div className="p-4">{children}</div>
-  </div>
+// Inline Icons to ensure zero-dependency
+const Users = ({ size = 24, className = "" }) => (
+  <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
 );
-
-const Modal = ({ isOpen, onClose, title, children }: any) => {
-  if (!isOpen) return null;
-  return (
-    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-      <div className="bg-white rounded-xl shadow-2xl w-full max-w-md max-h-[90vh] overflow-y-auto">
-        <div className="flex justify-between items-center p-4 border-b">
-          <h3 className="font-bold text-lg">{title}</h3>
-          <button onClick={onClose}><X size={20} /></button>
-        </div>
-        <div className="p-4 space-y-4">
-          {children}
-        </div>
-      </div>
-    </div>
-  );
-};
-
-const Input = ({ label, ...props }: any) => (
-  <div>
-    <label className="block text-sm font-medium text-slate-700 mb-1">{label}</label>
-    <input className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 outline-none" {...props} />
-  </div>
+const Car = ({ size = 24, className = "" }) => (
+  <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><path d="M19 17h2c.6 0 1-.4 1-1v-3c0-.9-.7-1.7-1.5-1.9C18.7 10.6 16 10 16 10s-1.3-1.4-2.2-2.3c-.5-.4-1.1-.7-1.8-.7H5c-.6 0-1.1.4-1.4.9l-1.4 2.9A3.7 3.7 0 0 0 2 12v4c0 .6.4 1 1 1h2"/><circle cx="7" cy="17" r="2"/><circle cx="17" cy="17" r="2"/><path d="M2 12h12"/></svg>
 );
-
-const Checkbox = ({ label, checked, onChange }: any) => (
-  <label className="flex items-center gap-2 cursor-pointer">
-    <div className={`w-5 h-5 rounded border flex items-center justify-center transition-colors ${checked ? 'bg-[#173f7f] border-[#173f7f]' : 'bg-white border-slate-300'}`}>
-      {checked && <Check size={14} className="text-white" />}
-    </div>
-    <input type="checkbox" className="hidden" checked={checked} onChange={onChange} />
-    <span className="text-sm text-slate-700 select-none">{label}</span>
-  </label>
+const AlertCircle = ({ size = 24, className = "" }) => (
+  <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><circle cx="12" cy="12" r="10"/><line x1="12" x2="12" y1="8" y2="12"/><line x1="12" x2="12.01" y1="16" y2="16"/></svg>
 );
-
-// --- MAIN APP COMPONENT ---
+const CheckCircle = ({ size = 24, className = "" }) => (
+  <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+);
+const Play = ({ size = 24, className = "" }) => (
+  <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><polygon points="5 3 19 12 5 21 5 3"/></svg>
+);
+const ArrowRight = ({ size = 24, className = "" }) => (
+  <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
+);
+const ArrowLeft = ({ size = 24, className = "" }) => (
+  <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>
+);
 
 export default function App() {
-  const [view, setView] = useState<'login' | 'dashboard' | 'players' | 'events' | 'eventDetail'>('login');
-  const [currentEventId, setCurrentEventId] = useState<ID | null>(null);
+  // --- PERSISTENCE LOGIC ---
+  const [view, setView] = useState(() => localStorage.getItem('tc_view') || 'setup1');
+  const [people, setPeople] = useState(() => {
+    try {
+      const saved = localStorage.getItem('tc_people');
+      if (saved) {
+        // Migration check: ensure new blockedWith field exists if loading old data
+        const parsed = JSON.parse(saved);
+        return parsed.map((p: any) => ({
+          ...p,
+          blockedWith: p.blockedWith || [], // Ensure array exists
+          // Remove legacy allowedWith if it exists to avoid confusion
+          allowedWith: undefined 
+        }));
+      }
+      return [];
+    } catch (e) { return []; }
+  });
   
-  // Data State
-  const [players, setPlayers] = useState<Player[]>([]);
-  const [drivers, setDrivers] = useState<Driver[]>([]);
-  const [events, setEvents] = useState<Event[]>([]);
-  const [groups, setGroups] = useState<PreferredGroup[]>([]);
-  const [eligibility, setEligibility] = useState<Eligibility[]>([]);
-  
-  // Event Specific State (loaded when viewing event)
-  const [attendance, setAttendance] = useState<EventAttendance[]>([]);
-  const [eventDrivers, setEventDrivers] = useState<EventDriver[]>([]);
-  const [assignments, setAssignments] = useState<Assignment[]>([]);
+  const [assignments, setAssignments] = useState(() => {
+    try {
+      const saved = localStorage.getItem('tc_assignments');
+      return saved ? JSON.parse(saved) : null;
+    } catch (e) { return null; }
+  });
 
-  // Init
-  useEffect(() => {
-    DB.init();
-    refreshData();
-    // Check session
-    if (sessionStorage.getItem('tc_auth')) setView('dashboard');
-  }, []);
+  const [newPersonName, setNewPersonName] = useState('');
+  const [error, setError] = useState('');
 
-  const refreshData = () => {
-    setPlayers(DB.get('players'));
-    setDrivers(DB.get('drivers'));
-    setEvents(DB.get('events'));
-    setGroups(DB.get('groups'));
-    setEligibility(DB.get('eligibility'));
-  };
+  // Save changes
+  useEffect(() => { localStorage.setItem('tc_view', view); }, [view]);
+  useEffect(() => { localStorage.setItem('tc_people', JSON.stringify(people)); }, [people]);
+  useEffect(() => { 
+    if (assignments) localStorage.setItem('tc_assignments', JSON.stringify(assignments));
+    else localStorage.removeItem('tc_assignments');
+  }, [assignments]);
 
-  const handleLogin = (code: string) => {
-    if (code === 'COACH123') { // Simple auth
-      sessionStorage.setItem('tc_auth', 'true');
-      setView('dashboard');
-    } else {
-      alert('Invalid code. Try COACH123');
-    }
-  };
 
-  const navigateToEvent = (eventId: string) => {
-    setCurrentEventId(eventId);
-    // Load event specific data
-    const allAttendance = DB.get('attendance');
-    const allED = DB.get('eventDrivers');
-    const allAssignments = DB.get('assignments');
-    
-    setAttendance(allAttendance.filter((a:any) => a.eventId === eventId));
-    setEventDrivers(allED.filter((e:any) => e.eventId === eventId));
-    setAssignments(allAssignments.filter((a:any) => a.eventId === eventId));
-    
-    setView('eventDetail');
-  };
-
-  // --- RENDER VIEWS ---
-
-  if (view === 'login') {
-    return <LoginScreen onLogin={handleLogin} />;
-  }
-
-  return (
-    <div className="min-h-screen bg-slate-50 text-slate-900 font-sans">
-      {/* Top Nav */}
-      <div className="sticky top-0 z-30 shadow-md text-white" style={{ backgroundColor: COLORS.primary }}>
-        <div className="max-w-5xl mx-auto px-4 py-3 flex items-center justify-between">
-          <div className="flex items-center gap-2 font-bold text-xl cursor-pointer" onClick={() => setView('dashboard')}>
-            <Car className="text-[#1abc54]" />
-            <span>TeamCarpool</span>
-          </div>
-          <div className="flex gap-4 text-sm font-medium">
-            <button onClick={() => setView('players')} className={`hover:text-[#1abc54] ${view === 'players' ? 'text-[#1abc54]' : ''}`}>People</button>
-            <button onClick={() => setView('events')} className={`hover:text-[#1abc54] ${view === 'events' ? 'text-[#1abc54]' : ''}`}>Events</button>
-            <button onClick={() => { sessionStorage.removeItem('tc_auth'); setView('login'); }}><LogOut size={18} /></button>
-          </div>
-        </div>
-      </div>
-
-      <div className="max-w-5xl mx-auto p-4">
-        {view === 'dashboard' && <Dashboard players={players} drivers={drivers} events={events} onNav={setView} onEventClick={navigateToEvent} />}
-        {view === 'players' && <PeopleManager players={players} drivers={drivers} groups={groups} eligibility={eligibility} refresh={refreshData} />}
-        {view === 'events' && <EventsList events={events} onEventClick={navigateToEvent} refresh={refreshData} />}
-        {view === 'eventDetail' && currentEventId && (
-          <EventDetail 
-            eventId={currentEventId} 
-            allPlayers={players} 
-            allDrivers={drivers} 
-            allGroups={groups}
-            allEligibility={eligibility}
-            attendance={attendance}
-            eventDrivers={eventDrivers}
-            assignments={assignments}
-            onBack={() => setView('events')}
-            refreshData={() => navigateToEvent(currentEventId)}
-          />
-        )}
-      </div>
-    </div>
-  );
-}
-
-// --- SUB-SCREENS ---
-
-const LoginScreen = ({ onLogin }: any) => {
-  const [code, setCode] = useState('');
-  return (
-    <div className="min-h-screen flex items-center justify-center p-4 bg-slate-100">
-      <div className="bg-white p-8 rounded-2xl shadow-xl w-full max-w-sm text-center space-y-6">
-        <div className="flex justify-center mb-4">
-          <div className="p-4 rounded-full bg-blue-50">
-            <Car size={48} style={{ color: COLORS.primary }} />
-          </div>
-        </div>
-        <h1 className="text-2xl font-bold text-slate-800">TeamCarpool</h1>
-        <p className="text-slate-500">Enter organizer access code</p>
-        <div className="space-y-3">
-          <Input 
-            placeholder="Access Code" 
-            value={code} 
-            onChange={(e:any) => setCode(e.target.value)} 
-            type="password"
-          />
-          <Button onClick={() => onLogin(code)} className="w-full">
-            Enter Dashboard
-          </Button>
-          <div className="text-xs text-slate-400">Try: COACH123</div>
-        </div>
-      </div>
-    </div>
-  );
-};
-
-const Dashboard = ({ players, drivers, events, onNav, onEventClick }: any) => (
-  <div className="space-y-6">
-    <h2 className="text-2xl font-bold">Organizer Dashboard</h2>
-    
-    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-      <Card title="Team Stats" action={<Button variant="secondary" onClick={() => onNav('players')} className="text-xs px-2 py-1">Manage</Button>}>
-        <div className="grid grid-cols-2 gap-4 text-center">
-          <div className="p-4 bg-blue-50 rounded-lg">
-            <div className="text-3xl font-bold text-[#173f7f]">{players.length}</div>
-            <div className="text-sm text-slate-600">Players</div>
-          </div>
-          <div className="p-4 bg-green-50 rounded-lg">
-            <div className="text-3xl font-bold text-[#1abc54]">{drivers.length}</div>
-            <div className="text-sm text-slate-600">Drivers</div>
-          </div>
-        </div>
-      </Card>
-
-      <Card title="Upcoming Events" action={<Button variant="primary" onClick={() => onNav('events')} className="text-xs px-2 py-1"><Plus size={14} /> New</Button>}>
-        <div className="space-y-2">
-          {events.length === 0 ? (
-            <div className="text-slate-400 text-sm text-center py-4">No upcoming events</div>
-          ) : (
-            events.slice(0, 3).map((ev: Event) => (
-              <div key={ev.id} onClick={() => onEventClick(ev.id)} className="flex items-center justify-between p-3 hover:bg-slate-50 rounded-lg cursor-pointer border border-transparent hover:border-slate-200 transition-all">
-                <div>
-                  <div className="font-semibold">{ev.name}</div>
-                  <div className="text-xs text-slate-500 flex items-center gap-1">
-                    <Calendar size={12} /> {formatDate(ev.dateTime)}
-                  </div>
-                </div>
-                <ChevronRight size={16} className="text-slate-400" />
-              </div>
-            ))
-          )}
-        </div>
-      </Card>
-    </div>
-  </div>
-);
-
-// --- PEOPLE MANAGER ---
-
-const PeopleManager = ({ players, drivers, groups, eligibility, refresh }: any) => {
-  const [tab, setTab] = useState<'players' | 'drivers'>('players');
-  const [isModalOpen, setIsModalOpen] = useState(false);
-  const [editingItem, setEditingItem] = useState<any>(null);
-
-  // -- CRUD Logic --
-  const savePlayer = (player: Player) => {
-    const list = DB.get('players');
-    if (editingItem) {
-      DB.set('players', list.map((p: Player) => p.id === player.id ? player : p));
-    } else {
-      DB.set('players', [player, ...list]);
-    }
-    refresh(); setIsModalOpen(false);
-  };
-
-  const saveDriver = (driver: Driver) => {
-    const list = DB.get('drivers');
-    if (editingItem) {
-      DB.set('drivers', list.map((d: Driver) => d.id === driver.id ? driver : d));
-    } else {
-      DB.set('drivers', [driver, ...list]);
-    }
-    refresh(); setIsModalOpen(false);
-  };
-
-  const deleteItem = (type: 'players' | 'drivers', id: ID) => {
-    if (!confirm('Are you sure?')) return;
-    const list = DB.get(type);
-    DB.set(type, list.filter((i: any) => i.id !== id));
-    refresh();
-  };
-
-  return (
-    <div className="space-y-4">
-      <div className="flex justify-between items-center">
-        <h2 className="text-2xl font-bold">People</h2>
-        <Button onClick={() => { setEditingItem(null); setIsModalOpen(true); }}><Plus size={16} /> Add {tab === 'players' ? 'Player' : 'Driver'}</Button>
-      </div>
-
-      <div className="flex gap-2 border-b border-slate-200 mb-4">
-        <button onClick={() => setTab('players')} className={`px-4 py-2 font-medium border-b-2 ${tab === 'players' ? 'border-[#173f7f] text-[#173f7f]' : 'border-transparent text-slate-500'}`}>Players</button>
-        <button onClick={() => setTab('drivers')} className={`px-4 py-2 font-medium border-b-2 ${tab === 'drivers' ? 'border-[#173f7f] text-[#173f7f]' : 'border-transparent text-slate-500'}`}>Drivers</button>
-      </div>
-
-      <div className="bg-white rounded-xl shadow-sm border overflow-hidden">
-        {tab === 'players' ? (
-          <table className="w-full text-left text-sm">
-            <thead className="bg-slate-50 text-slate-500">
-              <tr>
-                <th className="p-3">Name</th>
-                <th className="p-3">Team</th>
-                <th className="p-3">Child Seat</th>
-                <th className="p-3 text-right">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100">
-              {players.map((p: Player) => (
-                <tr key={p.id} className="hover:bg-slate-50">
-                  <td className="p-3 font-medium">{p.name}</td>
-                  <td className="p-3 text-slate-600">{p.teamName}</td>
-                  <td className="p-3">{p.needsChildSeat ? <span className="bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full text-xs">Required</span> : '-'}</td>
-                  <td className="p-3 text-right flex justify-end gap-2">
-                    <button onClick={() => { setEditingItem(p); setIsModalOpen(true); }} className="text-slate-400 hover:text-blue-600"><Edit2 size={16} /></button>
-                    <button onClick={() => deleteItem('players', p.id)} className="text-slate-400 hover:text-red-600"><Trash2 size={16} /></button>
-                  </td>
-                </tr>
-              ))}
-              {players.length === 0 && <tr><td colSpan={4} className="p-8 text-center text-slate-400">No players yet.</td></tr>}
-            </tbody>
-          </table>
-        ) : (
-          <table className="w-full text-left text-sm">
-            <thead className="bg-slate-50 text-slate-500">
-              <tr>
-                <th className="p-3">Name</th>
-                <th className="p-3">Capacity</th>
-                <th className="p-3">Child Seats</th>
-                <th className="p-3 text-right">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100">
-              {drivers.map((d: Driver) => (
-                <tr key={d.id} className="hover:bg-slate-50">
-                  <td className="p-3 font-medium">{d.name}</td>
-                  <td className="p-3 text-slate-600">{d.maxSeatsTotal} seats</td>
-                  <td className="p-3 text-slate-600">{d.maxChildSeats}</td>
-                  <td className="p-3 text-right flex justify-end gap-2">
-                    <button onClick={() => { setEditingItem(d); setIsModalOpen(true); }} className="text-slate-400 hover:text-blue-600"><Edit2 size={16} /></button>
-                    <button onClick={() => deleteItem('drivers', d.id)} className="text-slate-400 hover:text-red-600"><Trash2 size={16} /></button>
-                  </td>
-                </tr>
-              ))}
-              {drivers.length === 0 && <tr><td colSpan={4} className="p-8 text-center text-slate-400">No drivers yet.</td></tr>}
-            </tbody>
-          </table>
-        )}
-      </div>
-
-      {/* Edit/Create Modal */}
-      <Modal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} title={editingItem ? 'Edit' : 'Add New'}>
-        {tab === 'players' ? (
-          <PlayerForm 
-            initial={editingItem || { id: generateId(), name: '', teamName: '', grade: '', needsChildSeat: false, groupIds: [] }} 
-            onSave={savePlayer} 
-          />
-        ) : (
-          <DriverForm 
-            initial={editingItem || { id: generateId(), name: '', hasLicense: true, maxSeatsTotal: 4, maxChildSeats: 0, notes: '' }} 
-            onSave={saveDriver} 
-          />
-        )}
-      </Modal>
-    </div>
-  );
-};
-
-const PlayerForm = ({ initial, onSave }: any) => {
-  const [data, setData] = useState(initial);
-  return (
-    <div className="space-y-3">
-      <Input label="Name" value={data.name} onChange={(e:any) => setData({...data, name: e.target.value})} />
-      <Input label="Team" value={data.teamName} onChange={(e:any) => setData({...data, teamName: e.target.value})} />
-      <Input label="Grade" value={data.grade} onChange={(e:any) => setData({...data, grade: e.target.value})} />
-      <Checkbox label="Needs Child Seat / Booster" checked={data.needsChildSeat} onChange={(e:any) => setData({...data, needsChildSeat: e.target.checked})} />
-      <Button onClick={() => onSave(data)} className="w-full mt-4">Save Player</Button>
-    </div>
-  );
-};
-
-const DriverForm = ({ initial, onSave }: any) => {
-  const [data, setData] = useState(initial);
-  return (
-    <div className="space-y-3">
-      <Input label="Name" value={data.name} onChange={(e:any) => setData({...data, name: e.target.value})} />
-      <div className="grid grid-cols-2 gap-3">
-        <Input type="number" label="Max Seats (Total)" value={data.maxSeatsTotal} onChange={(e:any) => setData({...data, maxSeatsTotal: parseInt(e.target.value)})} />
-        <Input type="number" label="Max Child Seats" value={data.maxChildSeats} onChange={(e:any) => setData({...data, maxChildSeats: parseInt(e.target.value)})} />
-      </div>
-      <Input label="Notes" value={data.notes} onChange={(e:any) => setData({...data, notes: e.target.value})} />
-      <Button onClick={() => onSave(data)} className="w-full mt-4">Save Driver</Button>
-    </div>
-  );
-};
-
-// --- EVENTS LIST ---
-
-const EventsList = ({ events, onEventClick, refresh }: any) => {
-  const [isModalOpen, setIsModalOpen] = useState(false);
-  const [newEvent, setNewEvent] = useState({ name: '', dateTime: '', locationName: '', locationAddress: '', notes: '' });
-
-  const createEvent = () => {
-    const event = { ...newEvent, id: generateId() };
-    DB.set('events', [event, ...events]);
-    refresh();
-    setIsModalOpen(false);
-  };
-
-  const deleteEvent = (e: React.MouseEvent, id: string) => {
-    e.stopPropagation();
-    if (!confirm('Delete this event? This will remove all carpool assignments.')) return;
-    DB.set('events', events.filter((ev: Event) => ev.id !== id));
-    // Also clean up related data
-    DB.set('attendance', DB.get('attendance').filter((a:any) => a.eventId !== id));
-    DB.set('eventDrivers', DB.get('eventDrivers').filter((a:any) => a.eventId !== id));
-    DB.set('assignments', DB.get('assignments').filter((a:any) => a.eventId !== id));
-    refresh();
-  };
-
-  return (
-    <div className="space-y-4">
-      <div className="flex justify-between items-center">
-        <h2 className="text-2xl font-bold">Events</h2>
-        <Button onClick={() => setIsModalOpen(true)}><Plus size={16} /> Create Event</Button>
-      </div>
-      <div className="space-y-3">
-        {events.map((ev: Event) => (
-          <div key={ev.id} onClick={() => onEventClick(ev.id)} className="bg-white p-4 rounded-xl shadow-sm border hover:border-blue-300 cursor-pointer flex justify-between items-center group">
-            <div>
-              <div className="font-bold text-lg text-[#173f7f]">{ev.name}</div>
-              <div className="text-slate-500 text-sm flex gap-3 mt-1">
-                <span className="flex items-center gap-1"><Calendar size={14}/> {formatDate(ev.dateTime)}</span>
-                <span className="flex items-center gap-1"><MapPin size={14}/> {ev.locationName}</span>
-              </div>
-            </div>
-            <button onClick={(e) => deleteEvent(e, ev.id)} className="p-2 text-slate-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity">
-              <Trash2 size={18} />
-            </button>
-          </div>
-        ))}
-        {events.length === 0 && <div className="text-center py-12 text-slate-400">No events yet. Create one to start.</div>}
-      </div>
-
-      <Modal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} title="Create New Event">
-        <div className="space-y-3">
-          <Input label="Event Name" placeholder="e.g. Away vs Lincoln" value={newEvent.name} onChange={(e:any) => setNewEvent({...newEvent, name: e.target.value})} />
-          <Input label="Date & Time" type="datetime-local" value={newEvent.dateTime} onChange={(e:any) => setNewEvent({...newEvent, dateTime: e.target.value})} />
-          <Input label="Location Name" placeholder="e.g. Lincoln High School" value={newEvent.locationName} onChange={(e:any) => setNewEvent({...newEvent, locationName: e.target.value})} />
-          <Input label="Address" value={newEvent.locationAddress} onChange={(e:any) => setNewEvent({...newEvent, locationAddress: e.target.value})} />
-          <Button onClick={createEvent} className="w-full mt-4">Create Event</Button>
-        </div>
-      </Modal>
-    </div>
-  );
-};
-
-// --- EVENT DETAIL & CARPOOL LOGIC ---
-
-const EventDetail = ({ 
-  eventId, allPlayers, allDrivers, allGroups, allEligibility,
-  attendance, eventDrivers, assignments,
-  onBack, refreshData 
-}: any) => {
-  const [tab, setTab] = useState<'attendance'|'drivers'|'carpool'>('attendance');
-  const event = DB.get('events').find((e:any) => e.id === eventId);
-  const [localAttendance, setLocalAttendance] = useState<EventAttendance[]>(attendance);
-  const [localEventDrivers, setLocalEventDrivers] = useState<EventDriver[]>(eventDrivers);
-  
-  // Sync prop changes to local state
-  useEffect(() => { setLocalAttendance(attendance); }, [attendance]);
-  useEffect(() => { setLocalEventDrivers(eventDrivers); }, [eventDrivers]);
-
-  if (!event) return <div>Event not found</div>;
-
-  // --- ACTIONS ---
-
-  const saveAttendance = () => {
-    const fullList = DB.get('attendance').filter((a:any) => a.eventId !== eventId);
-    DB.set('attendance', [...fullList, ...localAttendance]);
-    alert('Attendance saved!');
-    refreshData();
-  };
-
-  const saveDrivers = () => {
-    const fullList = DB.get('eventDrivers').filter((a:any) => a.eventId !== eventId);
-    DB.set('eventDrivers', [...fullList, ...localEventDrivers]);
-    alert('Drivers saved!');
-    refreshData();
-  };
-
-  const toggleAttendance = (pid: ID, field: 'isGoing' | 'needsRide') => {
-    const existing = localAttendance.find(a => a.playerId === pid) || { eventId, playerId: pid, isGoing: false, needsRide: true };
-    const updated = { ...existing, [field]: !existing[field] };
-    
-    // Logic: if not going, cannot need ride. if going, default need ride is true.
-    if (field === 'isGoing' && !updated.isGoing) updated.needsRide = false;
-    if (field === 'isGoing' && updated.isGoing) updated.needsRide = true;
-    
-    setLocalAttendance([
-      ...localAttendance.filter(a => a.playerId !== pid),
-      updated
-    ]);
-  };
-
-  const toggleDriver = (did: ID, field: 'isDriving' | 'direction', value?: any) => {
-    const driverDef = allDrivers.find((d:any) => d.id === did);
-    const existing = localEventDrivers.find(d => d.driverId === did) || { 
-      eventId, driverId: did, isDriving: false, direction: 'both', 
-      availableSeatsTotal: driverDef.maxSeatsTotal, 
-      availableChildSeats: driverDef.maxChildSeats, notes: '' 
+  const addPerson = () => {
+    if (!newPersonName.trim()) return;
+    const newPerson = {
+      id: Date.now(),
+      name: newPersonName.trim(),
+      hasLicense: false,
+      seats: 4,
+      blockedWith: [], // Changed from allowedWith to blockedWith
+      mustRideWith: null,
+      isDrivingToday: false,
+      isGoingToday: false
     };
-    
-    let updated = { ...existing };
-    if (field === 'isDriving') updated.isDriving = !updated.isDriving;
-    else if (field === 'direction') updated.direction = value;
-    else updated = { ...updated, [field]: value }; // for seats override if needed
-
-    setLocalEventDrivers([
-      ...localEventDrivers.filter(d => d.driverId !== did),
-      updated
-    ]);
+    setPeople([newPerson, ...people]);
+    setNewPersonName('');
   };
 
-  // --- ALGORITHM ---
+  const updatePerson = (id: any, field: any, value: any) => {
+    setPeople(people.map((p: any) => {
+      if (p.id === id) {
+        // If blocking a driver that is the "mustRideWith", clear "mustRideWith"
+        if (field === 'blockedWith' && p.mustRideWith) {
+          const newBlocked = Array.isArray(value) ? value : [];
+          if (newBlocked.includes(p.mustRideWith)) {
+            return { ...p, [field]: value, mustRideWith: null };
+          }
+        }
+        return { ...p, [field]: value };
+      }
+      return p;
+    }));
+  };
 
-  const generateCarpool = () => {
-    // 1. Get Participants
-    const goingPlayers = allPlayers.filter((p: Player) => {
-      const att = localAttendance.find(a => a.playerId === p.id);
-      return att && att.isGoing && att.needsRide;
-    });
+  const togglePersonInArray = (personId: any, field: 'blockedWith', targetId: any) => {
+    setPeople(people.map((p: any) => {
+      if (p.id === personId) {
+        const arr = p[field] || [];
+        const newArr = arr.includes(targetId)
+          ? arr.filter((id: any) => id !== targetId) // Unblock
+          : [...arr, targetId]; // Block
+        
+        // If blocking the mustRideWith driver, clear the preference
+        if (p.mustRideWith === targetId && newArr.includes(targetId)) {
+          return { ...p, [field]: newArr, mustRideWith: null };
+        }
+        
+        return { ...p, [field]: newArr };
+      }
+      return p;
+    }));
+  };
 
-    const activeDrivers = localEventDrivers.filter(d => d.isDriving);
-
-    if (activeDrivers.length === 0) {
-      alert('No drivers marked for this event!');
+  const organizeCarpool = () => {
+    setError('');
+    
+    const drivers = people.filter((p: any) => p.isDrivingToday && p.hasLicense);
+    const goingPeople = people.filter((p: any) => p.isGoingToday);
+    const passengers = goingPeople.filter((p: any) => !p.isDrivingToday);
+    
+    if (drivers.length === 0) {
+      setError('Pick at least one driver!');
+      setAssignments(null);
       return;
     }
 
-    // 2. Setup Driver Capacity Buckets
-    let newAssignments: Assignment[] = [];
-    let unassignedIds: ID[] = [];
+    const totalSeats = drivers.reduce((sum: any, d: any) => sum + d.seats, 0);
     
-    // We treat "to" and "from" directions somewhat independently or simplified "both" for prototype.
-    // For this prototype, we'll assume "both" direction for simplicity of the algorithm, 
-    // or assign to the driver regardless of direction match (refine later).
-    
-    // Helper to check if driver allows player
-    const isAllowed = (did: ID, pid: ID) => {
-      const rule = allEligibility.find((e:any) => e.driverId === did && e.playerId === pid);
-      return rule ? rule.allowed : true; // allowed by default
-    };
-
-    const getPreference = (did: ID, pid: ID) => {
-      const rule = allEligibility.find((e:any) => e.driverId === did && e.playerId === pid);
-      return rule ? rule.preference : 'none';
-    };
-
-    // Prepare driver buckets
-    const buckets = activeDrivers.map(d => ({
-      ...d,
-      remainingSeats: d.availableSeatsTotal,
-      remainingChildSeats: d.availableChildSeats,
-      assignedPlayerIds: [] as ID[]
-    }));
-
-    // 3. Process Logic
-    // Sort players: Groups (Hard) -> Groups (Soft) -> Individuals
-    // Simplified: Just sort by Needs Child Seat first (hard constraint), then random.
-    const sortedPlayers = [...goingPlayers].sort((a, b) => (a.needsChildSeat === b.needsChildSeat ? 0 : a.needsChildSeat ? -1 : 1));
-
-    for (const player of sortedPlayers) {
-      // Find best driver
-      let bestDriverIndex = -1;
-      let bestScore = -1;
-
-      buckets.forEach((bucket, idx) => {
-        if (bucket.remainingSeats <= 0) return;
-        if (player.needsChildSeat && bucket.remainingChildSeats <= 0) return;
-        if (!isAllowed(bucket.driverId, player.id)) return;
-
-        // Scoring
-        let score = 10;
-        const pref = getPreference(bucket.driverId, player.id);
-        if (pref === 'always') score += 50;
-        if (pref === 'prefer') score += 20;
-        
-        // Load balancing: prefer empty cars slightly? No, prefer filling cars to minimize drivers? 
-        // Let's prefer filling cars that already have people (clustering) or sticking to preferences.
-        // Simple greedy: score higher for preference, then higher for remaining capacity to fill?
-        // Let's just use preference.
-        
-        if (score > bestScore) {
-          bestScore = score;
-          bestDriverIndex = idx;
-        }
-      });
-
-      if (bestDriverIndex !== -1) {
-        // Assign
-        buckets[bestDriverIndex].remainingSeats--;
-        if (player.needsChildSeat) buckets[bestDriverIndex].remainingChildSeats--;
-        buckets[bestDriverIndex].assignedPlayerIds.push(player.id);
-        
-        newAssignments.push({
-          id: generateId(),
-          eventId,
-          driverId: buckets[bestDriverIndex].driverId,
-          playerId: player.id,
-          direction: 'both' // Simplified for now
-        });
-      } else {
-        unassignedIds.push(player.id);
-        // Create unassigned record
-        newAssignments.push({
-          id: generateId(),
-          eventId,
-          driverId: 'unassigned',
-          playerId: player.id,
-          direction: 'both'
-        });
-      }
+    if (passengers.length > totalSeats) {
+      setError(`Not enough seats! ${passengers.length} people but only ${totalSeats} seats available.`);
     }
 
-    // Save to DB
-    const otherAssignments = DB.get('assignments').filter((a:any) => a.eventId !== eventId);
-    DB.set('assignments', [...otherAssignments, ...newAssignments]);
-    refreshData();
-    setTab('carpool');
-    alert(`Carpool generated. ${unassignedIds.length} players unassigned.`);
+    // Initialize groups
+    const groups = drivers.map((d: any) => ({
+      driver: d,
+      passengers: [],
+      seatsLeft: d.seats
+    }));
+
+    const assignedIds = new Set();
+    const leftOut: any[] = [];
+
+    // --- PASS 1: Assign "Must Ride With" preferences ---
+    // If preference is available, assign them. If not, they wait for Pass 2.
+    passengers.forEach((p: any) => {
+      if (p.mustRideWith) {
+        const targetGroup = groups.find((g: any) => g.driver.id === p.mustRideWith);
+        
+        // Check if driver is going, has seats, and is NOT blocked (sanity check)
+        if (targetGroup && targetGroup.seatsLeft > 0) {
+           const isBlocked = (p.blockedWith || []).includes(targetGroup.driver.id);
+           if (!isBlocked) {
+             targetGroup.passengers.push(p);
+             targetGroup.seatsLeft--;
+             assignedIds.add(p.id);
+           }
+        }
+      }
+    });
+
+    // --- PASS 2: Assign remaining passengers ---
+    passengers.forEach((p: any) => {
+      if (assignedIds.has(p.id)) return;
+
+      // Find first available driver that isn't blocked
+      const validGroup = groups.find((g: any) => {
+        if (g.seatsLeft <= 0) return false;
+        
+        // Check blocklist
+        const isBlocked = (p.blockedWith || []).includes(g.driver.id);
+        if (isBlocked) return false;
+
+        return true;
+      });
+
+      if (validGroup) {
+        validGroup.passengers.push(p);
+        validGroup.seatsLeft--;
+        assignedIds.add(p.id);
+      } else {
+        leftOut.push(p);
+      }
+    });
+
+    setAssignments({ 
+      groups: groups.filter((g: any) => g.passengers.length > 0 || g.driver.isGoingToday), 
+      leftOut 
+    });
   };
 
-  // --- RENDER ---
-
-  return (
-    <div className="space-y-4 pb-20">
-      {/* Header */}
-      <div className="flex items-center gap-2 mb-4">
-        <Button variant="secondary" onClick={onBack} className="px-2"><ChevronLeft /></Button>
-        <div>
-          <h2 className="text-xl font-bold text-[#173f7f]">{event.name}</h2>
-          <p className="text-sm text-slate-500">{formatDate(event.dateTime)} • {event.locationName}</p>
-        </div>
-      </div>
-
-      {/* Tabs */}
-      <div className="flex bg-white rounded-lg shadow-sm border p-1">
-        {['attendance', 'drivers', 'carpool'].map((t: any) => (
-          <button 
-            key={t} 
-            onClick={() => setTab(t)} 
-            className={`flex-1 py-2 text-sm font-medium rounded-md capitalize transition-colors ${tab === t ? 'bg-[#173f7f] text-white' : 'text-slate-500 hover:bg-slate-50'}`}
-          >
-            {t}
-          </button>
-        ))}
-      </div>
-
-      {/* Tab Content */}
-      <div className="bg-white rounded-xl shadow-sm border p-4 min-h-[400px]">
-        
-        {/* ATTENDANCE */}
-        {tab === 'attendance' && (
-          <div className="space-y-4">
-            <div className="flex justify-between items-center">
-              <h3 className="font-bold text-slate-700">Who is going?</h3>
-              <Button onClick={saveAttendance} variant="accent"><Save size={16} /> Save Changes</Button>
-            </div>
-            <div className="divide-y">
-              {allPlayers.map((p: Player) => {
-                const att = localAttendance.find(a => a.playerId === p.id) || { isGoing: false, needsRide: true };
-                return (
-                  <div key={p.id} className={`py-3 flex items-center justify-between ${att.isGoing ? 'opacity-100' : 'opacity-50'}`}>
-                    <div className="flex items-center gap-3">
-                      <button onClick={() => toggleAttendance(p.id, 'isGoing')} className={`w-6 h-6 rounded border flex items-center justify-center ${att.isGoing ? 'bg-[#1abc54] border-[#1abc54]' : 'bg-white'}`}>
-                        {att.isGoing && <Check size={14} className="text-white" />}
-                      </button>
-                      <span className="font-medium">{p.name}</span>
-                      {p.needsChildSeat && <span className="text-[10px] bg-blue-100 text-blue-700 px-1.5 rounded">Child Seat</span>}
-                    </div>
-                    {att.isGoing && (
-                      <label className="flex items-center gap-2 text-sm text-slate-600 cursor-pointer">
-                        <input type="checkbox" checked={att.needsRide} onChange={() => toggleAttendance(p.id, 'needsRide')} className="w-4 h-4" />
-                        Needs Ride
-                      </label>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        )}
-
-        {/* DRIVERS */}
-        {tab === 'drivers' && (
-          <div className="space-y-4">
-            <div className="flex justify-between items-center">
-              <h3 className="font-bold text-slate-700">Available Drivers</h3>
-              <Button onClick={saveDrivers} variant="accent"><Save size={16} /> Save Changes</Button>
-            </div>
-            <div className="space-y-3">
-              {allDrivers.map((d: Driver) => {
-                const ed = localEventDrivers.find(x => x.driverId === d.id);
-                const isDriving = ed?.isDriving || false;
-                return (
-                  <div key={d.id} className={`border rounded-lg p-3 transition-colors ${isDriving ? 'border-blue-300 bg-blue-50/30' : 'border-slate-200'}`}>
-                    <div className="flex items-center gap-3 mb-2">
-                       <button onClick={() => toggleDriver(d.id, 'isDriving')} className={`w-6 h-6 rounded border flex items-center justify-center ${isDriving ? 'bg-[#173f7f] border-[#173f7f]' : 'bg-white'}`}>
-                        {isDriving && <Check size={14} className="text-white" />}
-                      </button>
-                      <div>
-                        <div className="font-bold text-slate-800">{d.name}</div>
-                        <div className="text-xs text-slate-500">{d.maxSeatsTotal} seats • {d.maxChildSeats} child seats</div>
-                      </div>
-                    </div>
-                    {isDriving && (
-                      <div className="ml-9 flex gap-4 text-sm">
-                         <div className="flex items-center gap-2">
-                            <span className="text-slate-600">Direction:</span>
-                            <select 
-                              value={ed?.direction || 'both'} 
-                              onChange={(e) => toggleDriver(d.id, 'direction', e.target.value)}
-                              className="border rounded px-2 py-1 bg-white text-sm"
-                            >
-                              <option value="both">Both Ways</option>
-                              <option value="to">To Event Only</option>
-                              <option value="from">From Event Only</option>
-                            </select>
-                         </div>
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        )}
-
-        {/* CARPOOL BOARD */}
-        {tab === 'carpool' && (
-          <CarpoolBoard 
-            eventId={eventId}
-            assignments={assignments} 
-            eventDrivers={eventDrivers} 
-            players={allPlayers} 
-            drivers={allDrivers}
-            onGenerate={generateCarpool}
-            refreshData={refreshData}
-          />
-        )}
-
-      </div>
-    </div>
-  );
-};
-
-// --- CARPOOL BOARD (DnD UI) ---
-
-const CarpoolBoard = ({ eventId, assignments, eventDrivers, players, drivers, onGenerate, refreshData }: any) => {
-  const activeDrivers = eventDrivers.filter((d:any) => d.isDriving);
-  
-  // Drag and Drop State
-  const [draggedPlayerId, setDraggedPlayerId] = useState<ID | null>(null);
-
-  const handleDrop = (targetDriverId: ID) => {
-    if (!draggedPlayerId) return;
-
-    // Remove old assignment
-    const filtered = assignments.filter((a:any) => a.playerId !== draggedPlayerId);
+  const movePassenger = (passengerId: any, fromCarIndex: any, toCarIndex: any) => {
+    if (!assignments) return;
     
-    // Add new assignment
-    const newAssign = {
-      id: generateId(),
-      eventId,
-      driverId: targetDriverId,
-      playerId: draggedPlayerId,
-      direction: 'both'
-    };
-
-    // Update DB
-    const otherEvents = DB.get('assignments').filter((a:any) => a.eventId !== eventId);
-    DB.set('assignments', [...otherEvents, ...filtered, newAssign]);
+    const newGroups = [...assignments.groups];
+    const fromCar = newGroups[fromCarIndex];
+    const toCar = toCarIndex === -1 ? null : newGroups[toCarIndex];
     
-    setDraggedPlayerId(null);
-    refreshData();
+    const passengerIndex = fromCar.passengers.findIndex((p: any) => p.id === passengerId);
+    if (passengerIndex === -1) return;
+    
+    const passenger = fromCar.passengers[passengerIndex];
+    
+    if (toCarIndex === -1) {
+      fromCar.passengers.splice(passengerIndex, 1);
+      fromCar.seatsLeft++;
+      setAssignments({
+        groups: newGroups,
+        leftOut: [...assignments.leftOut, passenger]
+      });
+      return;
+    }
+    
+    if (toCar && toCar.seatsLeft > 0) {
+      fromCar.passengers.splice(passengerIndex, 1);
+      fromCar.seatsLeft++;
+      toCar.passengers.push(passenger);
+      toCar.seatsLeft--;
+      setAssignments({ ...assignments, groups: newGroups });
+    }
   };
 
-  const getDriverLoad = (did: ID) => assignments.filter((a:any) => a.driverId === did).length;
-  const getUnassigned = () => assignments.filter((a:any) => a.driverId === 'unassigned');
+  const moveFromLeftOut = (passengerId: any, toCarIndex: any) => {
+    if (!assignments) return;
+    
+    const newGroups = [...assignments.groups];
+    const toCar = newGroups[toCarIndex];
+    const passenger = assignments.leftOut.find((p: any) => p.id === passengerId);
+    
+    if (!passenger || !toCar || toCar.seatsLeft <= 0) return;
+    
+    toCar.passengers.push(passenger);
+    toCar.seatsLeft--;
+    setAssignments({
+      groups: newGroups,
+      leftOut: assignments.leftOut.filter((p: any) => p.id !== passengerId)
+    });
+  };
 
-  // If no assignments exist at all for this event, show prompt
-  if (assignments.length === 0) {
-    return (
-      <div className="text-center py-12">
-        <Car size={48} className="mx-auto text-slate-300 mb-4" />
-        <h3 className="text-lg font-bold text-slate-700">No Carpool Yet</h3>
-        <p className="text-slate-500 mb-6">Setup attendance and drivers, then generate.</p>
-        <Button onClick={onGenerate}>Generate Carpool</Button>
-      </div>
-    );
-  }
+  const drivers = people.filter((p: any) => p.hasLicense);
+  const goingCount = people.filter((p: any) => p.isGoingToday).length;
+  const drivingCount = people.filter((p: any) => p.isDrivingToday && p.hasLicense).length;
 
   return (
-    <div>
-      <div className="flex justify-between items-center mb-4">
-        <div className="text-sm text-slate-600">
-          <span className="font-bold text-[#173f7f]">{assignments.length}</span> passengers total
-        </div>
-        <div className="flex gap-2">
-          <Button variant="secondary" onClick={onGenerate} className="text-xs">Re-Calculate</Button>
-        </div>
-      </div>
-
-      <div className="flex gap-4 overflow-x-auto pb-4 hide-scrollbar items-start">
-        
-        {/* UNASSIGNED COLUMN */}
-        <div 
-          className="min-w-[250px] bg-red-50 rounded-xl border-2 border-red-100 flex-shrink-0"
-          onDragOver={(e) => e.preventDefault()}
-          onDrop={() => handleDrop('unassigned')}
-        >
-          <div className="p-3 border-b border-red-100 font-bold text-red-800 flex justify-between">
-            <span>Unassigned</span>
-            <span className="bg-white px-2 rounded-full text-xs py-0.5">{getUnassigned().length}</span>
+    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 p-4">
+      <div className="max-w-4xl mx-auto">
+        <div className="bg-white rounded-2xl shadow-xl p-5">
+          <div className="flex items-center gap-2 mb-5">
+            <Car className="text-indigo-600" size={28} />
+            <div>
+              <h1 className="text-2xl font-bold text-gray-800">TeamCarpool</h1>
+              <p className="text-xs text-gray-600">Setup once, organize fast</p>
+            </div>
           </div>
-          <div className="p-2 space-y-2 min-h-[100px]">
-            {getUnassigned().map((a:any) => {
-              const p = players.find((x:any) => x.id === a.playerId);
-              if(!p) return null;
-              return (
-                <PlayerCard key={p.id} player={p} onDragStart={() => setDraggedPlayerId(p.id)} />
-              );
-            })}
-          </div>
-        </div>
 
-        {/* DRIVER COLUMNS */}
-        {activeDrivers.map((ed:any) => {
-          const d = drivers.find((x:any) => x.id === ed.driverId);
-          const assigned = assignments.filter((a:any) => a.driverId === d.id);
-          const isFull = assigned.length >= ed.availableSeatsTotal;
-          
-          return (
-            <div 
-              key={d.id} 
-              className={`min-w-[250px] bg-white rounded-xl border-2 flex-shrink-0 transition-colors ${isFull ? 'border-slate-200' : 'border-blue-200'}`}
-              onDragOver={(e) => e.preventDefault()}
-              onDrop={() => handleDrop(d.id)}
+          {/* Nav */}
+          <div className="flex gap-2 mb-5">
+            <button
+              onClick={() => setView('setup1')}
+              className={`flex-1 py-2 rounded-lg font-medium text-sm ${
+                view === 'setup1'
+                  ? 'bg-indigo-600 text-white'
+                  : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+              }`}
             >
-              <div className="p-3 border-b flex justify-between items-center bg-slate-50/50 rounded-t-xl">
-                <div>
-                  <div className="font-bold text-slate-800">{d.name}</div>
-                  <div className="text-xs text-slate-500">{assigned.length} / {ed.availableSeatsTotal} seats</div>
-                </div>
-                {isFull && <Check size={16} className="text-green-500" />}
+              Add People
+            </button>
+            <button
+              onClick={() => setView('setup2')}
+              disabled={people.length === 0}
+              className={`flex-1 py-2 rounded-lg font-medium text-sm disabled:opacity-50 disabled:cursor-not-allowed ${
+                view === 'setup2'
+                  ? 'bg-indigo-600 text-white'
+                  : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+              }`}
+            >
+              Set Rules
+            </button>
+            <button
+              onClick={() => setView('organize')}
+              disabled={people.length === 0}
+              className={`flex-1 py-2 rounded-lg font-medium text-sm disabled:opacity-50 disabled:cursor-not-allowed ${
+                view === 'organize'
+                  ? 'bg-indigo-600 text-white'
+                  : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+              }`}
+            >
+              <Play size={14} className="inline mr-1" />
+              Organize
+            </button>
+          </div>
+
+          {/* STEP 1: Add People */}
+          {view === 'setup1' && (
+            <div className="space-y-4">
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={newPersonName}
+                  onChange={(e) => setNewPersonName(e.target.value)}
+                  onKeyPress={(e) => e.key === 'Enter' && addPerson()}
+                  placeholder="Name"
+                  className="flex-1 px-3 py-2 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 text-gray-900 bg-white"
+                />
+                <button
+                  onClick={addPerson}
+                  className="px-5 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 font-medium"
+                >
+                  Add
+                </button>
               </div>
-              <div className="p-2 space-y-2 min-h-[100px]">
-                {assigned.map((a:any) => {
-                  const p = players.find((x:any) => x.id === a.playerId);
-                  if(!p) return null;
-                  return (
-                    <PlayerCard key={p.id} player={p} onDragStart={() => setDraggedPlayerId(p.id)} />
-                  );
-                })}
+
+              {people.length > 0 ? (
+                <>
+                  <div className="space-y-2">
+                    {people.map((p: any) => (
+                      <div key={p.id} className="p-3 bg-gray-50 rounded-lg border-2 border-gray-200 flex items-center gap-3">
+                        <span className="flex-1 font-semibold text-gray-800">{p.name}</span>
+                        <label className="flex items-center gap-1.5 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={p.hasLicense}
+                            onChange={(e) => updatePerson(p.id, 'hasLicense', e.target.checked)}
+                            className="w-4 h-4 text-indigo-600"
+                          />
+                          <span className="text-sm text-gray-700">Driver</span>
+                        </label>
+                        {p.hasLicense && (
+                          <div className="flex items-center gap-1">
+                            <input
+                              type="number"
+                              min="1"
+                              max="8"
+                              value={p.seats}
+                              onChange={(e) => updatePerson(p.id, 'seats', parseInt(e.target.value) || 4)}
+                              className="w-12 px-2 py-1 text-sm border-2 border-gray-300 rounded text-center text-gray-900 bg-white"
+                            />
+                            <span className="text-xs text-gray-600">seats</span>
+                          </div>
+                        )}
+                        <button
+                          onClick={() => setPeople(people.filter((per: any) => per.id !== p.id))}
+                          className="text-red-500 hover:text-red-700 text-sm font-medium"
+                        >
+                          Remove
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                  <button
+                    onClick={() => setView('setup2')}
+                    className="w-full py-2.5 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 font-medium flex items-center justify-center gap-2"
+                  >
+                    Next: Set Rules
+                    <ArrowRight size={18} />
+                  </button>
+                </>
+              ) : (
+                <div className="text-center py-12 text-gray-500">
+                  <Users size={40} className="mx-auto mb-2 opacity-50" />
+                  <p className="text-sm">Add people to get started</p>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* STEP 2: Set Rules */}
+          {view === 'setup2' && (
+            <div className="space-y-4">
+              <p className="text-sm text-gray-600">
+                Everyone rides with anyone by default. <span className="text-red-600 font-bold">Tap a driver to block them</span> for a specific person.
+              </p>
+              
+              {people.map((p: any) => {
+                const potentialDrivers = drivers.filter((d: any) => d.id !== p.id);
+                // Filter allowed drivers for the "Must ride with" list
+                const allowedDriversList = potentialDrivers.filter((d: any) => !(p.blockedWith || []).includes(d.id));
+                
+                return (
+                  <div key={p.id} className="p-3 bg-gray-50 rounded-lg border-2 border-gray-200">
+                    <div className="font-semibold text-gray-800 mb-2">{p.name}</div>
+                    
+                    <div className="space-y-2.5">
+                      <div>
+                        <label className="text-xs text-gray-600 mb-1.5 block font-bold">
+                          Do NOT ride with:
+                        </label>
+                        <div className="flex flex-wrap gap-1.5">
+                          {potentialDrivers.length > 0 ? (
+                            potentialDrivers.map((d: any) => {
+                              const isBlocked = (p.blockedWith || []).includes(d.id);
+                              return (
+                                <button
+                                  key={d.id}
+                                  onClick={() => togglePersonInArray(p.id, 'blockedWith', d.id)}
+                                  className={`px-2.5 py-1 rounded-full text-xs font-medium border transition-colors ${
+                                    isBlocked
+                                      ? 'bg-red-600 border-red-600 text-white hover:bg-red-700'
+                                      : 'bg-white border-gray-300 text-gray-700 hover:border-gray-400 hover:bg-gray-100'
+                                  }`}
+                                >
+                                  {d.name} {isBlocked && '✕'}
+                                </button>
+                              );
+                            })
+                          ) : (
+                            <span className="text-xs text-gray-500 italic">No other drivers</span>
+                          )}
+                        </div>
+                      </div>
+
+                      {allowedDriversList.length > 0 && (
+                        <div>
+                          <label className="text-xs text-gray-600 mb-1.5 block">
+                            Prefer to ride with: <span className="text-gray-500">(Optional)</span>
+                          </label>
+                          <div className="flex flex-wrap gap-1.5">
+                            {allowedDriversList.map((d: any) => (
+                              <button
+                                key={d.id}
+                                onClick={() => updatePerson(p.id, 'mustRideWith', p.mustRideWith === d.id ? null : d.id)}
+                                className={`px-2.5 py-1 rounded-full text-xs font-medium border transition-colors ${
+                                  p.mustRideWith === d.id
+                                    ? 'bg-indigo-600 border-indigo-600 text-white'
+                                    : 'bg-white border-gray-300 text-gray-700 hover:border-gray-400'
+                                }`}
+                              >
+                                {d.name} {p.mustRideWith === d.id && '✓'}
+                              </button>
+                            ))}
+                          </div>
+                          {p.mustRideWith && <div className="text-[10px] text-gray-500 mt-1">* If {people.find((x:any) => x.id === p.mustRideWith)?.name} is full or not driving, they will ride with someone else.</div>}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setView('setup1')}
+                  className="flex-1 py-2.5 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 font-medium flex items-center justify-center gap-2"
+                >
+                  <ArrowLeft size={18} />
+                  Back
+                </button>
+                <button
+                  onClick={() => setView('organize')}
+                  className="flex-1 py-2.5 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 font-medium"
+                >
+                  Done - Organize Trips
+                </button>
               </div>
             </div>
-          );
-        })}
+          )}
 
+          {/* ORGANIZE VIEW */}
+          {view === 'organize' && (
+            <div className="space-y-4">
+              {people.length === 0 ? (
+                <div className="text-center py-12">
+                  <Users size={40} className="mx-auto text-gray-400 mb-2" />
+                  <p className="text-sm text-gray-600 mb-3">Add people first</p>
+                  <button
+                    onClick={() => setView('setup1')}
+                    className="px-5 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 text-sm font-medium"
+                  >
+                    Add People
+                  </button>
+                </div>
+              ) : (
+                <>
+                  <div className="bg-gray-50 rounded-lg border-2 border-gray-200 p-3">
+                    <div className="text-sm font-semibold text-gray-700 mb-2">
+                      Who's going and driving?
+                    </div>
+                    <div className="space-y-1.5">
+                      {people.map((p: any) => (
+                        <div key={p.id} className="flex items-center gap-2 bg-white p-2 rounded">
+                          <label className="flex items-center gap-1.5 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={p.isGoingToday}
+                              onChange={(e) => updatePerson(p.id, 'isGoingToday', e.target.checked)}
+                              className="w-4 h-4 text-green-600"
+                            />
+                            <span className="font-medium text-sm text-gray-800">{p.name}</span>
+                          </label>
+                          
+                          {p.hasLicense && p.isGoingToday && (
+                            <label className="flex items-center gap-1.5 ml-auto cursor-pointer">
+                              <input
+                                type="checkbox"
+                                checked={p.isDrivingToday}
+                                onChange={(e) => updatePerson(p.id, 'isDrivingToday', e.target.checked)}
+                                className="w-4 h-4 text-blue-600"
+                              />
+                              <span className="text-xs text-gray-700">Driving ({p.seats})</span>
+                            </label>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                    <div className="mt-2 text-xs text-gray-600 flex gap-3">
+                      <span>Going: {goingCount}</span>
+                      <span>Driving: {drivingCount}</span>
+                    </div>
+                  </div>
+
+                  <button
+                    onClick={organizeCarpool}
+                    disabled={drivingCount === 0 || goingCount === 0}
+                    className="w-full py-3 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 font-semibold disabled:bg-gray-300 disabled:cursor-not-allowed"
+                  >
+                    {assignments ? 'Re-organize Carpool' : 'Organize Carpool'}
+                  </button>
+
+                  {error && (
+                    <div className="flex items-center gap-2 p-2.5 bg-red-50 border-2 border-red-200 rounded-lg text-red-700 text-sm">
+                      <AlertCircle size={16} />
+                      <span>{error}</span>
+                    </div>
+                  )}
+
+                  {assignments && (
+                    <div className="space-y-2.5 pt-3 border-t-2 border-gray-200">
+                      <div className="flex items-center gap-2 p-2.5 bg-green-50 border-2 border-green-200 rounded-lg text-green-700">
+                        <CheckCircle size={18} />
+                        <span className="font-semibold text-sm">All set!</span>
+                      </div>
+
+                      {assignments.groups.map((g: any, carIndex: any) => (
+                        <div key={carIndex} className="bg-indigo-50 border-2 border-indigo-300 rounded-lg overflow-hidden">
+                          <div className="bg-indigo-100 px-3 py-2 flex items-center gap-2">
+                            <Car size={16} className="text-indigo-700" />
+                            <span className="font-bold text-sm text-indigo-900">Car {carIndex + 1}: {g.driver.name}</span>
+                            <span className="text-xs text-indigo-700 ml-auto">
+                              {g.passengers.length}/{g.driver.seats}
+                            </span>
+                          </div>
+                          {g.passengers.length > 0 && (
+                            <div className="p-2 space-y-1">
+                              {g.passengers.map((p: any) => (
+                                <div key={p.id} className="flex items-center gap-2 bg-white px-2 py-1.5 rounded">
+                                  <span className="flex-1 font-medium text-sm text-gray-800">{p.name}</span>
+                                  <div className="flex gap-1">
+                                    {assignments.groups.map((targetCar: any, targetIndex: any) => 
+                                      targetIndex !== carIndex && targetCar.seatsLeft > 0 && (
+                                        <button
+                                          key={targetIndex}
+                                          onClick={() => movePassenger(p.id, carIndex, targetIndex)}
+                                          className="px-2 py-0.5 bg-indigo-100 hover:bg-indigo-200 text-indigo-700 rounded text-xs font-medium"
+                                          title={`Move to Car ${targetIndex + 1}`}
+                                        >
+                                          →{targetIndex + 1}
+                                        </button>
+                                      )
+                                    )}
+                                    <button
+                                      onClick={() => movePassenger(p.id, carIndex, -1)}
+                                      className="px-2 py-0.5 bg-red-100 hover:bg-red-200 text-red-700 rounded text-xs font-medium"
+                                      title="Remove from car"
+                                    >
+                                      ✕
+                                    </button>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      ))}
+
+                      {assignments.leftOut.length > 0 && (
+                        <div className="bg-red-50 border-2 border-red-300 rounded-lg overflow-hidden">
+                          <div className="bg-red-100 px-3 py-2 flex items-center gap-2">
+                            <AlertCircle size={16} className="text-red-700" />
+                            <span className="font-bold text-sm text-red-900">Not assigned</span>
+                          </div>
+                          <div className="p-2 space-y-1">
+                            {assignments.leftOut.map((p: any) => (
+                              <div key={p.id} className="flex items-center gap-2 bg-white px-2 py-1.5 rounded">
+                                <span className="flex-1 font-medium text-sm text-red-700">{p.name}</span>
+                                <div className="flex gap-1">
+                                  {assignments.groups.map((car: any, index: any) => 
+                                    car.seatsLeft > 0 && (
+                                      <button
+                                        key={index}
+                                        onClick={() => moveFromLeftOut(p.id, index)}
+                                        className="px-2 py-0.5 bg-green-100 hover:bg-green-200 text-green-700 rounded text-xs font-medium"
+                                        title={`Add to Car ${index + 1}`}
+                                      >
+                                        +Car{index + 1}
+                                      </button>
+                                    )
+                                  )}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
-};
-
-const PlayerCard = ({ player, onDragStart }: any) => (
-  <div 
-    draggable 
-    onDragStart={onDragStart}
-    className="bg-white p-2.5 rounded-lg border border-slate-200 shadow-sm cursor-grab active:cursor-grabbing hover:border-blue-300 group"
-  >
-    <div className="flex justify-between items-start">
-      <div className="font-medium text-sm text-slate-800">{player.name}</div>
-      <GripVertical size={14} className="text-slate-300" />
-    </div>
-    <div className="flex gap-1 mt-1">
-      {player.needsChildSeat && <span className="text-[10px] bg-blue-100 text-blue-700 px-1 rounded">Booster</span>}
-      <span className="text-[10px] bg-slate-100 text-slate-600 px-1 rounded">{player.teamName || 'Team'}</span>
-    </div>
-  </div>
-);
+}
