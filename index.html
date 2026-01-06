@@ -4,9 +4,10 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>TeamCarpool</title>
+        <link href="/src/index.css" rel="stylesheet">
     <!-- Babel is required to run JSX/TSX in the browser without a build step -->
-    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-    <script src="https://cdn.tailwindcss.com"></script>
+
+
     <style>
       body { margin: 0; font-family: system-ui, -apple-system, sans-serif; }
       /* Custom Scrollbar for boards */
@@ -32,6 +33,5 @@
       data-presets="typescript,react" tells Babel how to handle TSX.
       data-type="module" allows using import/export.
     -->
-    <script type="text/babel" data-type="module" data-presets="typescript,react" src="./index.tsx"></script>
-  </body>
+    <script type="module" src="/src/index.tsx"></script>  </body>
 </html>
