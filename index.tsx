@@ -1,6 +1,7 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
-import App from './App';
+// NOTE: We must include the .tsx extension when using Babel in the browser
+import App from './App.tsx';
 
 const rootElement = document.getElementById('root');
 if (!rootElement) {
