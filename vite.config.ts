@@ -5,6 +5,7 @@ import tailwindcss from '@tailwindcss/vite';
 
 export default defineConfig(({ mode }) => {
     const env = loadEnv(mode, '.', '');
+        base: '/Carpool/',
     return {
       server: {
         port: 3000,
