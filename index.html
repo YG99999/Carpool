@@ -9,6 +9,9 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
       body { margin: 0; font-family: system-ui, -apple-system, sans-serif; }
+      /* Custom Scrollbar for boards */
+      .hide-scrollbar::-webkit-scrollbar { display: none; }
+      .hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
     </style>
     <script type="importmap">
 {
@@ -22,7 +25,7 @@
 }
 </script>
   </head>
-  <body class="bg-gray-100">
+  <body class="bg-gray-100 text-slate-900">
     <div id="root"></div>
     <!-- 
       type="text/babel" tells the browser to let Babel compile this.
