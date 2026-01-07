@@ -22,6 +22,9 @@ const ArrowRight = ({ size = 24, className = "" }) => (
 const ArrowLeft = ({ size = 24, className = "" }) => (
   <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>
 );
+const Copy = ({ size = 24, className = "" }) => (
+  <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+);
 
 export default function App() {
   // --- PERSISTENCE LOGIC ---
@@ -53,6 +56,7 @@ export default function App() {
 
   const [newPersonName, setNewPersonName] = useState('');
   const [error, setError] = useState('');
+  const [copied, setCopied] = useState(false);
 
   // Save changes
   useEffect(() => { localStorage.setItem('tc_view', view); }, [view]);
@@ -190,6 +194,12 @@ export default function App() {
       }
     });
 
+    // Sort groups: Regular drivers first, then Self-Only drivers
+    groups.sort((a: any, b: any) => {
+      if (a.driver.isDrivingSelfOnly === b.driver.isDrivingSelfOnly) return 0;
+      return a.driver.isDrivingSelfOnly ? 1 : -1;
+    });
+
     setAssignments({ 
       groups: groups.filter((g: any) => g.passengers.length > 0 || g.driver.isGoingToday), 
       leftOut 
@@ -247,6 +257,48 @@ export default function App() {
       groups: newGroups,
       leftOut: assignments.leftOut.filter((p: any) => p.id !== passengerId)
     });
+  };
+
+  const copyToClipboard = () => {
+    if (!assignments) return;
+
+    let text = "TeamCarpool Assignments\n\n";
+
+    // Regular Cars
+    const regularGroups = assignments.groups.filter((g: any) => !g.driver.isDrivingSelfOnly);
+    regularGroups.forEach((g: any, i: number) => {
+      text += `Car ${i + 1}: ${g.driver.name}\n`;
+      
+      if (g.passengers.length > 0) {
+        g.passengers.forEach((p: any) => {
+          text += `  - ${p.name}\n`;
+        });
+      } else {
+        text += `  (Empty)\n`;
+      }
+      text += "\n";
+    });
+
+    // Self Only Drivers
+    const selfGroups = assignments.groups.filter((g: any) => g.driver.isDrivingSelfOnly);
+    if (selfGroups.length > 0) {
+      text += "Driving Themselves\n";
+      selfGroups.forEach((g: any) => {
+        text += `  - ${g.driver.name}\n`;
+      });
+      text += "\n";
+    }
+
+    if (assignments.leftOut.length > 0) {
+      text += `Not Assigned:\n`;
+      assignments.leftOut.forEach((p: any) => {
+        text += `  - ${p.name}\n`;
+      });
+    }
+
+    navigator.clipboard.writeText(text);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
   };
 
   const drivers = people.filter((p: any) => p.hasLicense);
@@ -550,21 +602,28 @@ export default function App() {
 
                   {assignments && (
                     <div className="space-y-2.5 pt-3 border-t-2 border-gray-200">
-                      <div className="flex items-center gap-2 p-2.5 bg-green-50 border-2 border-green-200 rounded-lg text-green-700">
-                        <CheckCircle size={18} />
-                        <span className="font-semibold text-sm">All set!</span>
+                      <div className="flex items-center justify-between gap-2 p-2.5 bg-green-50 border-2 border-green-200 rounded-lg text-green-700">
+                        <div className="flex items-center gap-2">
+                            <CheckCircle size={18} />
+                            <span className="font-semibold text-sm">All set!</span>
+                        </div>
+                        <button 
+                            onClick={copyToClipboard}
+                            className="flex items-center gap-1.5 px-3 py-1 bg-white border border-green-300 rounded text-xs font-bold text-green-700 hover:bg-green-50 transition-colors"
+                        >
+                            {copied ? <CheckCircle size={14}/> : <Copy size={14}/>}
+                            {copied ? "Copied!" : "Copy List"}
+                        </button>
                       </div>
 
-                      {assignments.groups.map((g: any, carIndex: any) => (
-                        <div key={carIndex} className="bg-indigo-50 border-2 border-indigo-300 rounded-lg overflow-hidden">
+                      {/* Regular Cars */}
+                      {assignments.groups.filter((g: any) => !g.driver.isDrivingSelfOnly).map((g: any, i: any) => (
+                        <div key={i} className="bg-indigo-50 border-2 border-indigo-300 rounded-lg overflow-hidden">
                           <div className="bg-indigo-100 px-3 py-2 flex items-center gap-2">
                             <Car size={16} className="text-indigo-700" />
-                            <span className="font-bold text-sm text-indigo-900">Car {carIndex + 1}: {g.driver.name}</span>
+                            <span className="font-bold text-sm text-indigo-900">Car {i + 1}: {g.driver.name}</span>
                             <span className="text-xs text-indigo-700 ml-auto">
-                              {g.driver.isDrivingSelfOnly 
-                                ? <span className="text-orange-600 font-bold text-[10px] uppercase bg-orange-100 px-1.5 py-0.5 rounded border border-orange-200">Self Only</span> 
-                                : `${g.passengers.length}/${g.driver.seats}`
-                              }
+                              {`${g.passengers.length}/${g.driver.seats}`}
                             </span>
                           </div>
                           {g.passengers.length > 0 && (
@@ -574,19 +633,19 @@ export default function App() {
                                   <span className="flex-1 font-medium text-sm text-gray-800">{p.name}</span>
                                   <div className="flex gap-1">
                                     {assignments.groups.map((targetCar: any, targetIndex: any) => 
-                                      targetIndex !== carIndex && targetCar.seatsLeft > 0 && (
+                                      !targetCar.driver.isDrivingSelfOnly && targetCar.seatsLeft > 0 && targetCar.driver.id !== g.driver.id && (
                                         <button
                                           key={targetIndex}
-                                          onClick={() => movePassenger(p.id, carIndex, targetIndex)}
+                                          onClick={() => movePassenger(p.id, i, targetIndex)}
                                           className="px-2 py-0.5 bg-indigo-100 hover:bg-indigo-200 text-indigo-700 rounded text-xs font-medium"
                                           title={`Move to Car ${targetIndex + 1}`}
                                         >
-                                          →{targetIndex + 1}
+                                          →{assignments.groups.indexOf(targetCar) + 1}
                                         </button>
                                       )
                                     )}
                                     <button
-                                      onClick={() => movePassenger(p.id, carIndex, -1)}
+                                      onClick={() => movePassenger(p.id, i, -1)}
                                       className="px-2 py-0.5 bg-red-100 hover:bg-red-200 text-red-700 rounded text-xs font-medium"
                                       title="Remove from car"
                                     >
@@ -600,6 +659,25 @@ export default function App() {
                         </div>
                       ))}
 
+                      {/* Driving Themselves Section */}
+                      {assignments.groups.some((g: any) => g.driver.isDrivingSelfOnly) && (
+                        <div className="bg-orange-50 border-2 border-orange-200 rounded-lg overflow-hidden">
+                          <div className="bg-orange-100 px-3 py-2 flex items-center gap-2">
+                            <Car size={16} className="text-orange-700" />
+                            <span className="font-bold text-sm text-orange-900">Driving Themselves</span>
+                          </div>
+                          <div className="p-2 space-y-1">
+                            {assignments.groups
+                              .filter((g: any) => g.driver.isDrivingSelfOnly)
+                              .map((g: any) => (
+                                <div key={g.driver.id} className="flex items-center gap-2 bg-white px-2 py-1.5 rounded">
+                                  <span className="flex-1 font-medium text-sm text-gray-800">{g.driver.name}</span>
+                                </div>
+                              ))}
+                          </div>
+                        </div>
+                      )}
+
                       {assignments.leftOut.length > 0 && (
                         <div className="bg-red-50 border-2 border-red-300 rounded-lg overflow-hidden">
                           <div className="bg-red-100 px-3 py-2 flex items-center gap-2">
@@ -612,7 +690,7 @@ export default function App() {
                                 <span className="flex-1 font-medium text-sm text-red-700">{p.name}</span>
                                 <div className="flex gap-1">
                                   {assignments.groups.map((car: any, index: any) => 
-                                    car.seatsLeft > 0 && (
+                                    !car.driver.isDrivingSelfOnly && car.seatsLeft > 0 && (
                                       <button
                                         key={index}
                                         onClick={() => moveFromLeftOut(p.id, index)}
