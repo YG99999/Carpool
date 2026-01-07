@@ -35,6 +35,7 @@ export default function App() {
         return parsed.map((p: any) => ({
           ...p,
           blockedWith: p.blockedWith || [], // Ensure array exists
+          isDrivingSelfOnly: p.isDrivingSelfOnly || false, // Ensure self-only flag exists
           // Remove legacy allowedWith if it exists to avoid confusion
           allowedWith: undefined 
         }));
@@ -72,6 +73,7 @@ export default function App() {
       blockedWith: [], // Changed from allowedWith to blockedWith
       mustRideWith: null,
       isDrivingToday: false,
+      isDrivingSelfOnly: false, // New field for "Self Only" drivers
       isGoingToday: false
     };
     setPeople([newPerson, ...people]);
@@ -126,17 +128,21 @@ export default function App() {
       return;
     }
 
-    const totalSeats = drivers.reduce((sum: any, d: any) => sum + d.seats, 0);
+    // Calculate total seats excluding "Self Only" drivers' capacity
+    const totalSeats = drivers.reduce((sum: any, d: any) => {
+      return sum + (d.isDrivingSelfOnly ? 0 : d.seats);
+    }, 0);
     
     if (passengers.length > totalSeats) {
       setError(`Not enough seats! ${passengers.length} people but only ${totalSeats} seats available.`);
     }
 
     // Initialize groups
+    // If driving self only, seatsLeft is 0
     const groups = drivers.map((d: any) => ({
       driver: d,
       passengers: [],
-      seatsLeft: d.seats
+      seatsLeft: d.isDrivingSelfOnly ? 0 : d.seats
     }));
 
     const assignedIds = new Set();
@@ -212,6 +218,11 @@ export default function App() {
       return;
     }
     
+    // Check if target car can accept passenger (including self-only restriction)
+    // Actually, if a car is 'self only', seatsLeft is initialized to 0.
+    // If we want to allow manual override (drag and drop into self only car), 
+    // we would need to check if the user INTENDS to break the rule.
+    // For now, let's respect the seat limit strictly.
     if (toCar && toCar.seatsLeft > 0) {
       fromCar.passengers.splice(passengerIndex, 1);
       fromCar.seatsLeft++;
@@ -490,15 +501,28 @@ export default function App() {
                           </label>
                           
                           {p.hasLicense && p.isGoingToday && (
-                            <label className="flex items-center gap-1.5 ml-auto cursor-pointer">
-                              <input
-                                type="checkbox"
-                                checked={p.isDrivingToday}
-                                onChange={(e) => updatePerson(p.id, 'isDrivingToday', e.target.checked)}
-                                className="w-4 h-4 text-blue-600"
-                              />
-                              <span className="text-xs text-gray-700">Driving ({p.seats})</span>
-                            </label>
+                            <div className="ml-auto flex items-center gap-3">
+                                {p.isDrivingToday && (
+                                    <label className="flex items-center gap-1 cursor-pointer" title="Driver is not taking passengers">
+                                        <input
+                                            type="checkbox"
+                                            checked={p.isDrivingSelfOnly || false}
+                                            onChange={(e) => updatePerson(p.id, 'isDrivingSelfOnly', e.target.checked)}
+                                            className="w-3 h-3 text-orange-500 rounded border-gray-300 focus:ring-orange-500"
+                                        />
+                                        <span className="text-[10px] uppercase font-bold text-orange-600 tracking-wide">Self Only</span>
+                                    </label>
+                                )}
+                                <label className="flex items-center gap-1.5 cursor-pointer">
+                                  <input
+                                    type="checkbox"
+                                    checked={p.isDrivingToday}
+                                    onChange={(e) => updatePerson(p.id, 'isDrivingToday', e.target.checked)}
+                                    className="w-4 h-4 text-blue-600"
+                                  />
+                                  <span className="text-xs text-gray-700 font-medium">Driving ({p.seats})</span>
+                                </label>
+                            </div>
                           )}
                         </div>
                       ))}
@@ -537,7 +561,10 @@ export default function App() {
                             <Car size={16} className="text-indigo-700" />
                             <span className="font-bold text-sm text-indigo-900">Car {carIndex + 1}: {g.driver.name}</span>
                             <span className="text-xs text-indigo-700 ml-auto">
-                              {g.passengers.length}/{g.driver.seats}
+                              {g.driver.isDrivingSelfOnly 
+                                ? <span className="text-orange-600 font-bold text-[10px] uppercase bg-orange-100 px-1.5 py-0.5 rounded border border-orange-200">Self Only</span> 
+                                : `${g.passengers.length}/${g.driver.seats}`
+                              }
                             </span>
                           </div>
                           {g.passengers.length > 0 && (
