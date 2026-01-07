@@ -133,16 +133,19 @@ export default function App() {
     }
 
     // Calculate total seats excluding "Self Only" drivers' capacity
+    // NOTE: Self-only drivers will still take their 'mustRideWith' passengers, but for general seat count, we assume 0
     const totalSeats = drivers.reduce((sum: any, d: any) => {
       return sum + (d.isDrivingSelfOnly ? 0 : d.seats);
     }, 0);
     
     if (passengers.length > totalSeats) {
-      setError(`Not enough seats! ${passengers.length} people but only ${totalSeats} seats available.`);
+      // This warning might be slightly inaccurate if many people *must* ride with self-only drivers, 
+      // but it's a good baseline.
+      setError(`Not enough seats! ${passengers.length} people but only ${totalSeats} general seats available.`);
     }
 
     // Initialize groups
-    // If driving self only, seatsLeft is 0
+    // If driving self only, seatsLeft is 0 for general assignments
     const groups = drivers.map((d: any) => ({
       driver: d,
       passengers: [],
@@ -153,18 +156,33 @@ export default function App() {
     const leftOut: any[] = [];
 
     // --- PASS 1: Assign "Must Ride With" preferences ---
-    // If preference is available, assign them. If not, they wait for Pass 2.
+    // If preference is available, assign them. 
+    // CRITICAL CHANGE: "Self Only" drivers CAN take passengers if they are specifically preferred.
     passengers.forEach((p: any) => {
       if (p.mustRideWith) {
         const targetGroup = groups.find((g: any) => g.driver.id === p.mustRideWith);
         
-        // Check if driver is going, has seats, and is NOT blocked (sanity check)
-        if (targetGroup && targetGroup.seatsLeft > 0) {
+        if (targetGroup) {
            const isBlocked = (p.blockedWith || []).includes(targetGroup.driver.id);
            if (!isBlocked) {
-             targetGroup.passengers.push(p);
-             targetGroup.seatsLeft--;
-             assignedIds.add(p.id);
+             // Check capacity:
+             // If normal driver: check seatsLeft > 0
+             // If self-only driver: check physical capacity (passengers.length < driver.seats)
+             const canAccept = !targetGroup.driver.isDrivingSelfOnly 
+                ? targetGroup.seatsLeft > 0 
+                : targetGroup.passengers.length < targetGroup.driver.seats;
+
+             if (canAccept) {
+               targetGroup.passengers.push(p);
+               
+               // Only decrement public seatsLeft for normal drivers. 
+               // Self-only drivers keep seatsLeft at 0 (or lower) to prevent Pass 2 assignments.
+               if (!targetGroup.driver.isDrivingSelfOnly) {
+                 targetGroup.seatsLeft--;
+               }
+               
+               assignedIds.add(p.id);
+             }
            }
         }
       }
@@ -174,7 +192,7 @@ export default function App() {
     passengers.forEach((p: any) => {
       if (assignedIds.has(p.id)) return;
 
-      // Find first available driver that isn't blocked
+      // Find first available driver that isn't blocked and has seats left
       const validGroup = groups.find((g: any) => {
         if (g.seatsLeft <= 0) return false;
         
@@ -194,10 +212,15 @@ export default function App() {
       }
     });
 
-    // Sort groups: Regular drivers first, then Self-Only drivers
+    // Sort groups: 
+    // 1. Regular drivers AND Self-Only drivers WITH passengers
+    // 2. Purely Self-Only drivers (no passengers)
     groups.sort((a: any, b: any) => {
-      if (a.driver.isDrivingSelfOnly === b.driver.isDrivingSelfOnly) return 0;
-      return a.driver.isDrivingSelfOnly ? 1 : -1;
+      const aIsEmptySelf = a.driver.isDrivingSelfOnly && a.passengers.length === 0;
+      const bIsEmptySelf = b.driver.isDrivingSelfOnly && b.passengers.length === 0;
+      
+      if (aIsEmptySelf === bIsEmptySelf) return 0;
+      return aIsEmptySelf ? 1 : -1;
     });
 
     setAssignments({ 
@@ -220,7 +243,10 @@ export default function App() {
     
     if (toCarIndex === -1) {
       fromCar.passengers.splice(passengerIndex, 1);
-      fromCar.seatsLeft++;
+      // Only increment seatsLeft if it's not a self-only car (to keep them closed to general pool)
+      if (!fromCar.driver.isDrivingSelfOnly) {
+          fromCar.seatsLeft++;
+      }
       setAssignments({
         groups: newGroups,
         leftOut: [...assignments.leftOut, passenger]
@@ -228,14 +254,11 @@ export default function App() {
       return;
     }
     
-    // Check if target car can accept passenger (including self-only restriction)
-    // Actually, if a car is 'self only', seatsLeft is initialized to 0.
-    // If we want to allow manual override (drag and drop into self only car), 
-    // we would need to check if the user INTENDS to break the rule.
-    // For now, let's respect the seat limit strictly.
     if (toCar && toCar.seatsLeft > 0) {
       fromCar.passengers.splice(passengerIndex, 1);
-      fromCar.seatsLeft++;
+      if (!fromCar.driver.isDrivingSelfOnly) {
+          fromCar.seatsLeft++;
+      }
       toCar.passengers.push(passenger);
       toCar.seatsLeft--;
       setAssignments({ ...assignments, groups: newGroups });
@@ -264,8 +287,8 @@ export default function App() {
 
     let text = "TeamCarpool Assignments\n\n";
 
-    // Regular Cars
-    const regularGroups = assignments.groups.filter((g: any) => !g.driver.isDrivingSelfOnly);
+    // Regular Cars + Self-Only cars that HAVE passengers
+    const regularGroups = assignments.groups.filter((g: any) => !g.driver.isDrivingSelfOnly || g.passengers.length > 0);
     regularGroups.forEach((g: any, i: number) => {
       text += `Car ${i + 1}: ${g.driver.name}\n`;
       
@@ -279,8 +302,8 @@ export default function App() {
       text += "\n";
     });
 
-    // Self Only Drivers
-    const selfGroups = assignments.groups.filter((g: any) => g.driver.isDrivingSelfOnly);
+    // Purely Driving Themselves (Self-Only AND No Passengers)
+    const selfGroups = assignments.groups.filter((g: any) => g.driver.isDrivingSelfOnly && g.passengers.length === 0);
     if (selfGroups.length > 0) {
       text += "Driving Themselves\n";
       selfGroups.forEach((g: any) => {
@@ -616,8 +639,8 @@ export default function App() {
                         </button>
                       </div>
 
-                      {/* Regular Cars */}
-                      {assignments.groups.filter((g: any) => !g.driver.isDrivingSelfOnly).map((g: any, i: any) => (
+                      {/* Regular Cars + Self-Only Cars WITH Passengers */}
+                      {assignments.groups.filter((g: any) => !g.driver.isDrivingSelfOnly || g.passengers.length > 0).map((g: any, i: any) => (
                         <div key={i} className="bg-indigo-50 border-2 border-indigo-300 rounded-lg overflow-hidden">
                           <div className="bg-indigo-100 px-3 py-2 flex items-center gap-2">
                             <Car size={16} className="text-indigo-700" />
@@ -659,8 +682,8 @@ export default function App() {
                         </div>
                       ))}
 
-                      {/* Driving Themselves Section */}
-                      {assignments.groups.some((g: any) => g.driver.isDrivingSelfOnly) && (
+                      {/* Purely Driving Themselves Section (No passengers) */}
+                      {assignments.groups.some((g: any) => g.driver.isDrivingSelfOnly && g.passengers.length === 0) && (
                         <div className="bg-orange-50 border-2 border-orange-200 rounded-lg overflow-hidden">
                           <div className="bg-orange-100 px-3 py-2 flex items-center gap-2">
                             <Car size={16} className="text-orange-700" />
@@ -668,7 +691,7 @@ export default function App() {
                           </div>
                           <div className="p-2 space-y-1">
                             {assignments.groups
-                              .filter((g: any) => g.driver.isDrivingSelfOnly)
+                              .filter((g: any) => g.driver.isDrivingSelfOnly && g.passengers.length === 0)
                               .map((g: any) => (
                                 <div key={g.driver.id} className="flex items-center gap-2 bg-white px-2 py-1.5 rounded">
                                   <span className="flex-1 font-medium text-sm text-gray-800">{g.driver.name}</span>
